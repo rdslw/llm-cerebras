@@ -9,7 +9,7 @@ from llm_cerebras.cerebras import CerebrasModel
 
 @pytest.fixture
 def cerebras_model():
-    return CerebrasModel("cerebras-llama3.3-70b")
+    return CerebrasModel("cerebras-llama3.1-8b")
 
 
 def make_prompt(schema=None, prompt_text="Generate a person"):
@@ -22,6 +22,8 @@ def make_prompt(schema=None, prompt_text="Generate a person"):
     prompt.options.seed = None
     prompt.options.reasoning_effort = None
     prompt.options.disable_reasoning = None
+    prompt.options.clear_thinking = None
+    prompt.options.model_fields_set = set()
     return prompt
 
 

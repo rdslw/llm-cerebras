@@ -16,6 +16,10 @@ uv tool install --with llm-cerebras llm
 
 You'll need to provide an API key for Cerebras.
 
+The April 2026 Cerebras docs still describe a single Inference API key and the
+same `https://api.cerebras.ai/v1` base URL for coding integrations and paid
+Code plans.
+
 ```bash
 llm keys set cerebras
 ```
@@ -27,9 +31,9 @@ The plugin automatically fetches the latest available models from the Cerebras A
 ```bash
 llm models list | grep cerebras
 # CerebrasModel: cerebras-llama3.1-8b
-# CerebrasModel: cerebras-llama3.3-70b
-# CerebrasModel: cerebras-llama-4-scout-17b-16e-instruct
-# CerebrasModel: cerebras-qwen-3-32b
+# CerebrasModel: cerebras-gpt-oss-120b
+# CerebrasModel: cerebras-qwen-3-235b-a22b-instruct-2507
+# CerebrasModel: cerebras-zai-glm-4.7
 ```
 
 ## Refreshing models
@@ -42,6 +46,17 @@ llm cerebras refresh
 
 This will fetch the current list of available models and save them to the cache. The models are automatically cached for 24 hours, so you typically don't need to refresh manually unless you want to check for newly released models.
 
+## Model-specific defaults
+
+For `cerebras-zai-glm-4.7`, the plugin applies coding-oriented defaults unless you override them with `-o` options:
+
+- `temperature=0.9`
+- `top_p=0.95`
+- `max_tokens=32768` (sent to the API as `max_completion_tokens`)
+- `clear_thinking=false`
+
+The plugin also supports `reasoning_effort=none` for `cerebras-zai-glm-4.7`. The older `disable_reasoning` parameter remains available for compatibility, but Cerebras documents it as deprecated as of March 24, 2026.
+
 ## Schema Support
 
 The llm-cerebras plugin supports schemas for structured output using Cerebras native `json_schema` mode in strict mode.
@@ -51,13 +66,13 @@ You can use either compact schema syntax or full JSON Schema:
 
 ```bash
 # Using compact schema syntax
-llm -m cerebras-llama3.3-70b 'invent a dog' --schema 'name, age int, breed'
+llm -m cerebras-llama3.1-8b 'invent a dog' --schema 'name, age int, breed'
 
 # Using multi-item schema for lists
-llm -m cerebras-llama3.3-70b 'invent three dogs' --schema-multi 'name, age int, breed'
+llm -m cerebras-llama3.1-8b 'invent three dogs' --schema-multi 'name, age int, breed'
 
 # Using full JSON Schema 
-llm -m cerebras-llama3.3-70b 'invent a dog' --schema '{
+llm -m cerebras-llama3.1-8b 'invent a dog' --schema '{
   "type": "object",
   "properties": {
     "name": {"type": "string"},
@@ -73,7 +88,7 @@ llm -m cerebras-llama3.3-70b 'invent a dog' --schema '{
 You can add descriptions to your schema fields to guide the model:
 
 ```bash
-llm -m cerebras-llama3.3-70b 'invent a famous scientist' --schema '
+llm -m cerebras-llama3.1-8b 'invent a famous scientist' --schema '
 name: the full name including any titles
 field: their primary field of study
 year_born int: year of birth
@@ -88,7 +103,7 @@ You can save schemas as templates for reuse:
 
 ```bash
 # Create a template
-llm -m cerebras-llama3.3-70b --schema 'title, director, year int, genre' --save movie_template
+llm -m cerebras-llama3.1-8b --schema 'title, director, year int, genre' --save movie_template
 
 # Use the template
 llm -t movie_template 'suggest a sci-fi movie from the 1980s'

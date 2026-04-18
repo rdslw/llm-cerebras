@@ -47,8 +47,9 @@ def get_available_cerebras_model():
 
     preferred = [
         "cerebras-llama3.1-8b",
-        "cerebras-qwen-3-32b",
-        "cerebras-llama3.3-70b",
+        "cerebras-gpt-oss-120b",
+        "cerebras-qwen-3-235b-a22b-instruct-2507",
+        "cerebras-zai-glm-4.7",
     ]
     for model_id in preferred:
         if model_id in model_ids:

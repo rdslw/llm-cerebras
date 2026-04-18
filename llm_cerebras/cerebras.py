@@ -1,7 +1,6 @@
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
@@ -11,6 +10,27 @@ from pydantic import Field
 
 
 DEFAULT_HTTP_TIMEOUT = 120
+GPT_OSS_MODEL_ID = "gpt-oss-120b"
+GLM_47_MODEL_ID = "zai-glm-4.7"
+DEPRECATED_MODEL_IDS = {
+    "deepseek-r1-distill-llama-70b",
+    "llama-3.3-70b",
+    "llama-4-maverick-17b-128e-instruct",
+    "llama-4-scout-17b-16e-instruct",
+    "qwen-3-32b",
+}
+FALLBACK_MODELS = {
+    "cerebras-llama3.1-8b": "llama3.1-8b",
+    "cerebras-gpt-oss-120b": GPT_OSS_MODEL_ID,
+    "cerebras-qwen-3-235b-a22b-instruct-2507": "qwen-3-235b-a22b-instruct-2507",
+    "cerebras-zai-glm-4.7": GLM_47_MODEL_ID,
+}
+GLM_DEFAULTS = {
+    "temperature": 0.9,
+    "top_p": 0.95,
+    "max_completion_tokens": 32768,
+    "clear_thinking": False,
+}
 
 
 @llm.hookimpl
@@ -74,7 +94,7 @@ class CerebrasModel(llm.Model):
             if time.time() - cache_time > cls._cache_duration:
                 return None
 
-            return cache_data.get("models", {})
+            return cls._normalize_model_map(cache_data.get("models", {}))
         except (json.JSONDecodeError, KeyError, OSError) as e:
             logging.warning(f"Failed to load cached models: {e}")
             return None
@@ -82,6 +102,7 @@ class CerebrasModel(llm.Model):
     @classmethod
     def save_models_to_cache(cls, models):
         """Save models to cache with timestamp."""
+        models = cls._normalize_model_map(models)
         cache_file = cls.get_cache_file()
         cache_data = {"timestamp": time.time(), "models": models}
 
@@ -91,6 +112,17 @@ class CerebrasModel(llm.Model):
                 json.dump(cache_data, f, indent=2)
         except OSError as e:
             logging.warning(f"Failed to save models to cache: {e}")
+
+    @classmethod
+    def _normalize_model_map(cls, models):
+        """Filter out models that Cerebras now documents as deprecated."""
+        normalized = {}
+        for prefixed_id, api_id in (models or {}).items():
+            resolved_id = api_id or prefixed_id.removeprefix("cerebras-")
+            if resolved_id in DEPRECATED_MODEL_IDS:
+                continue
+            normalized[prefixed_id] = api_id
+        return normalized
 
     @classmethod
     def fetch_models_from_api(cls):
@@ -125,16 +157,11 @@ class CerebrasModel(llm.Model):
             else:
                 logging.warning("No 'data' field in API response")
 
-            return models
+            return cls._normalize_model_map(models)
 
         except Exception as e:
             logging.error(f"Failed to fetch models from API: {e}")
-            fallback_models = {
-                "cerebras-llama3.1-8b": "llama3.1-8b",
-                "cerebras-llama3.3-70b": "llama-3.3-70b",
-                "cerebras-llama-4-scout-17b-16e-instruct": "llama-4-scout-17b-16e-instruct",
-                "cerebras-deepseek-r1-distill-llama-70b": "DeepSeek-R1-Distill-Llama-70B",
-            }
+            fallback_models = dict(FALLBACK_MODELS)
             logging.info(f"Using fallback models: {list(fallback_models.keys())}")
             return fallback_models
 
@@ -181,12 +208,18 @@ class CerebrasModel(llm.Model):
             description="If specified, our system will make a best effort to sample deterministically.",
             default=None,
         )
-        reasoning_effort: Optional[Literal["low", "medium", "high"]] = Field(
+        reasoning_effort: Optional[Literal["none", "low", "medium", "high"]] = Field(
             description="Reasoning effort level for models that support it.",
             default=None,
         )
         disable_reasoning: Optional[bool] = Field(
-            description="Disable reasoning for models that support it.",
+            description="Disable reasoning for models that support it. Deprecated on zai-glm-4.7.",
+            default=None,
+        )
+        clear_thinking: Optional[bool] = Field(
+            description=(
+                "Preserve previous reasoning context on zai-glm-4.7 when set to false."
+            ),
             default=None,
         )
 
@@ -204,35 +237,18 @@ class CerebrasModel(llm.Model):
         has_schema = bool(getattr(prompt, "schema", None))
         should_stream = stream and not has_schema
         api_model = self.model_map.get(self.model_id, self.model_id)
+        option_fields_set = self._option_fields_set(prompt.options)
 
-        if (
-            prompt.options.reasoning_effort is not None
-            and api_model != "gpt-oss-120b"
-        ):
-            raise llm.ModelError(
-                "reasoning_effort can only be used with the gpt-oss-120b model"
-            )
-        if (
-            prompt.options.disable_reasoning is not None
-            and api_model != "zai-glm-4.7"
-        ):
-            raise llm.ModelError(
-                "disable_reasoning can only be used with the zai-glm-4.7 model"
-            )
+        self._validate_model_specific_options(prompt.options, api_model)
 
         data = {
             "model": api_model,
             "messages": messages,
             "stream": should_stream,
-            "temperature": prompt.options.temperature,
-            "max_tokens": prompt.options.max_tokens,
-            "top_p": prompt.options.top_p,
-            "seed": prompt.options.seed,
         }
-        if prompt.options.reasoning_effort is not None:
-            data["reasoning_effort"] = prompt.options.reasoning_effort
-        if prompt.options.disable_reasoning is not None:
-            data["disable_reasoning"] = prompt.options.disable_reasoning
+        data.update(
+            self._build_request_options(prompt.options, api_model, option_fields_set)
+        )
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
@@ -274,6 +290,88 @@ class CerebrasModel(llm.Model):
                     "Cerebras returned invalid JSON for a schema request"
                 ) from ex
         yield content
+
+    def _option_fields_set(self, options) -> set[str]:
+        for attr in ("model_fields_set", "__fields_set__"):
+            fields_set = getattr(options, attr, None)
+            if isinstance(fields_set, set):
+                return set(fields_set)
+            if isinstance(fields_set, (list, tuple)):
+                return set(fields_set)
+        return set()
+
+    def _validate_model_specific_options(self, options, api_model: str) -> None:
+        reasoning_effort = options.reasoning_effort
+        disable_reasoning = options.disable_reasoning
+        clear_thinking = options.clear_thinking
+
+        if reasoning_effort is not None:
+            if api_model == GPT_OSS_MODEL_ID:
+                if reasoning_effort not in {"low", "medium", "high"}:
+                    raise llm.ModelError(
+                        "reasoning_effort for gpt-oss-120b must be one of: low, medium, high"
+                    )
+            elif api_model == GLM_47_MODEL_ID:
+                if reasoning_effort != "none":
+                    raise llm.ModelError(
+                        'reasoning_effort for zai-glm-4.7 must be "none"'
+                    )
+            else:
+                raise llm.ModelError(
+                    "reasoning_effort can only be used with the gpt-oss-120b or zai-glm-4.7 models"
+                )
+
+        if disable_reasoning is not None and api_model != GLM_47_MODEL_ID:
+            raise llm.ModelError(
+                "disable_reasoning can only be used with the zai-glm-4.7 model"
+            )
+        if clear_thinking is not None and api_model != GLM_47_MODEL_ID:
+            raise llm.ModelError(
+                "clear_thinking can only be used with the zai-glm-4.7 model"
+            )
+        if (
+            api_model == GLM_47_MODEL_ID
+            and reasoning_effort is not None
+            and disable_reasoning is not None
+            and disable_reasoning != (reasoning_effort == "none")
+        ):
+            raise llm.ModelError(
+                "disable_reasoning conflicts with reasoning_effort for the zai-glm-4.7 model"
+            )
+
+    def _build_request_options(
+        self, options, api_model: str, option_fields_set
+    ) -> Dict[str, Any]:
+        temperature = options.temperature
+        top_p = options.top_p
+        max_completion_tokens = options.max_tokens
+        clear_thinking = options.clear_thinking
+
+        if api_model == GLM_47_MODEL_ID:
+            if "temperature" not in option_fields_set:
+                temperature = GLM_DEFAULTS["temperature"]
+            if "top_p" not in option_fields_set:
+                top_p = GLM_DEFAULTS["top_p"]
+            if "max_tokens" not in option_fields_set:
+                max_completion_tokens = GLM_DEFAULTS["max_completion_tokens"]
+            if "clear_thinking" not in option_fields_set:
+                clear_thinking = GLM_DEFAULTS["clear_thinking"]
+
+        data: Dict[str, Any] = {
+            "temperature": temperature,
+            "top_p": top_p,
+        }
+        if max_completion_tokens is not None:
+            data["max_completion_tokens"] = max_completion_tokens
+        if options.seed is not None:
+            data["seed"] = options.seed
+        if options.reasoning_effort is not None:
+            data["reasoning_effort"] = options.reasoning_effort
+        if options.disable_reasoning is not None:
+            data["disable_reasoning"] = options.disable_reasoning
+        if clear_thinking is not None:
+            data["clear_thinking"] = clear_thinking
+        return data
 
     def _build_messages(self, prompt, conversation) -> List[dict]:
         messages = []
