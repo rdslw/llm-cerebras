@@ -20,6 +20,8 @@ def make_prompt(schema=None, prompt_text="Generate a person"):
     prompt.options.max_tokens = None
     prompt.options.top_p = 1
     prompt.options.seed = None
+    prompt.options.reasoning_effort = None
+    prompt.options.disable_reasoning = None
     return prompt
 
 

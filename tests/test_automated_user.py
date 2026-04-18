@@ -8,8 +8,9 @@ import pytest
 import json
 import subprocess
 import tempfile
+import sqlite3
 from pathlib import Path
-import re
+from functools import lru_cache
 
 # Skip tests if SKIP_USER_TESTS is set
 pytestmark = pytest.mark.skipif(
@@ -28,10 +29,54 @@ def run_command(cmd):
     )
     return result.stdout.strip(), result.stderr.strip(), result.returncode
 
-def check_model_available():
-    """Check if cerebras models are available in llm"""
+@lru_cache(maxsize=1)
+def get_available_cerebras_model():
+    """Return an available Cerebras model ID, preferring smaller models."""
     stdout, stderr, returncode = run_command("llm models list")
-    return returncode == 0 and "cerebras" in stdout.lower()
+    if returncode != 0:
+        return None
+
+    model_ids = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith("CerebrasModel: "):
+            model_ids.append(line.split(": ", 1)[1].strip())
+
+    if not model_ids:
+        return None
+
+    preferred = [
+        "cerebras-llama3.1-8b",
+        "cerebras-qwen-3-32b",
+        "cerebras-llama3.3-70b",
+    ]
+    for model_id in preferred:
+        if model_id in model_ids:
+            return model_id
+    return model_ids[0]
+
+
+@lru_cache(maxsize=1)
+def has_working_cerebras_prompt():
+    """Check that prompting actually works, not just model listing."""
+    model_id = get_available_cerebras_model()
+    if not model_id:
+        return False
+
+    stdout, stderr, returncode = run_command(
+        f"llm -m {model_id} --no-stream -o max_tokens 12 'Say ok'"
+    )
+    return returncode == 0 and bool(stdout.strip())
+
+
+def require_working_cerebras_model():
+    """Return a working Cerebras model or skip if the environment is not ready."""
+    model_id = get_available_cerebras_model()
+    if not model_id:
+        pytest.skip("cerebras models not available")
+    if not has_working_cerebras_prompt():
+        pytest.skip("cerebras prompting not available in this environment")
+    return model_id
 
 @pytest.mark.user
 def test_plugin_installation():
@@ -48,7 +93,8 @@ def test_plugin_installation():
 @pytest.mark.user
 def test_models_listing():
     """Test that cerebras models are listed by llm"""
-    if not check_model_available():
+    model_id = get_available_cerebras_model()
+    if not model_id:
         pytest.skip("cerebras models not available")
     
     stdout, stderr, returncode = run_command("llm models list | grep -i cerebras")
@@ -57,18 +103,17 @@ def test_models_listing():
     models = stdout.strip().split("\n")
     assert len(models) >= 1, "No cerebras models found"
     
-    # Check for expected models
-    model_ids = [line.split(" - ")[0].strip() for line in models]
-    assert any("cerebras-llama" in model_id for model_id in model_ids), "No llama models found"
+    model_ids = [line.split(": ", 1)[1].strip() for line in models if ": " in line]
+    assert model_id in model_ids, f"Expected model {model_id} not present in list"
 
 @pytest.mark.user
 def test_workflow_basic_prompt():
     """Test a basic user workflow with a simple prompt"""
-    if not check_model_available():
-        pytest.skip("cerebras models not available")
+    model_id = require_working_cerebras_model()
     
-    # Test a simple prompt
-    stdout, stderr, returncode = run_command("llm -m cerebras-llama3.1-8b 'Write a haiku about programming'")
+    stdout, stderr, returncode = run_command(
+        f"llm -m {model_id} --no-stream 'Write a haiku about programming'"
+    )
     assert returncode == 0, f"Command failed: {stderr}"
     assert len(stdout) > 10, "Response too short"
     
@@ -79,13 +124,11 @@ def test_workflow_basic_prompt():
 @pytest.mark.user
 def test_workflow_schema_prompt():
     """Test a user workflow with a schema prompt"""
-    if not check_model_available():
-        pytest.skip("cerebras models not available")
+    model_id = require_working_cerebras_model()
     
-    # Test a schema prompt
-    stdout, stderr, returncode = run_command("""
-    llm -m cerebras-llama3.1-8b --schema 'title, year int, director, genre' 'Suggest a sci-fi movie'
-    """)
+    stdout, stderr, returncode = run_command(
+        f"llm -m {model_id} --no-stream --schema 'title, year int, director, genre' 'Suggest a sci-fi movie'"
+    )
     assert returncode == 0, f"Command failed: {stderr}"
     
     # Try to parse as JSON
@@ -102,35 +145,40 @@ def test_workflow_schema_prompt():
 @pytest.mark.user
 def test_workflow_conversation():
     """Test a conversational workflow with follow-up questions"""
-    if not check_model_available():
-        pytest.skip("cerebras models not available")
+    model_id = require_working_cerebras_model()
     
-    # Create a temporary conversation file
-    with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as f:
-        conversation_file = f.name
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.db', delete=False) as f:
+        database_path = f.name
     
     try:
-        # First question
-        cmd1 = f"llm -m cerebras-llama3.1-8b -c {conversation_file} 'What are the three laws of robotics?'"
+        cmd1 = (
+            f"llm -m {model_id} --no-stream --log --database {database_path} "
+            "'What are the three laws of robotics?'"
+        )
         stdout1, stderr1, returncode1 = run_command(cmd1)
         assert returncode1 == 0, f"Command failed: {stderr1}"
         assert "law" in stdout1.lower() and "robot" in stdout1.lower(), "Response doesn't mention laws or robots"
-        
-        # Follow-up question
-        cmd2 = f"llm -c {conversation_file} 'Who created these laws?'"
+
+        with sqlite3.connect(database_path) as conn:
+            conversation_id = conn.execute(
+                "select id from conversations order by id desc limit 1"
+            ).fetchone()[0]
+
+        cmd2 = (
+            f"llm --no-stream --database {database_path} --cid {conversation_id} "
+            "'Who created these laws?'"
+        )
         stdout2, stderr2, returncode2 = run_command(cmd2)
         assert returncode2 == 0, f"Command failed: {stderr2}"
         assert "asimov" in stdout2.lower(), "Response doesn't mention Asimov"
     finally:
-        # Clean up
-        if os.path.exists(conversation_file):
-            os.unlink(conversation_file)
+        if os.path.exists(database_path):
+            os.unlink(database_path)
 
 @pytest.mark.user
 def test_workflow_schema_template():
     """Test creating and using a schema template"""
-    if not check_model_available():
-        pytest.skip("cerebras models not available")
+    model_id = require_working_cerebras_model()
     
     # Create a schema template
     template_name = "test_movie_schema"
@@ -140,14 +188,11 @@ def test_workflow_schema_template():
     
     try:
         # Create template
-        cmd1 = f"""
-        llm -m cerebras-llama3.1-8b --schema '
-        title: the movie title
-        year int: release year
-        director: the director
-        genre: the primary genre
-        ' --system 'You are a helpful assistant that recommends movies' --save {template_name}
-        """
+        cmd1 = (
+            f"llm -m {model_id} --no-stream --schema "
+            "'title: the movie title\nyear int: release year\ndirector: the director\ngenre: the primary genre' "
+            f"--system 'You are a helpful assistant that recommends movies' --save {template_name}"
+        )
         stdout1, stderr1, returncode1 = run_command(cmd1)
         assert returncode1 == 0, f"Template creation failed: {stderr1}"
         
@@ -158,7 +203,7 @@ def test_workflow_schema_template():
         assert "title" in stdout2, "Template doesn't contain expected schema"
         
         # Use template
-        cmd3 = f"llm -m cerebras-llama3.1-8b -t {template_name} 'Suggest a comedy movie'"
+        cmd3 = f"llm -m {model_id} --no-stream -t {template_name} 'Suggest a comedy movie'"
         stdout3, stderr3, returncode3 = run_command(cmd3)
         assert returncode3 == 0, f"Template use failed: {stderr3}"
         

@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 import llm
@@ -181,6 +181,14 @@ class CerebrasModel(llm.Model):
             description="If specified, our system will make a best effort to sample deterministically.",
             default=None,
         )
+        reasoning_effort: Optional[Literal["low", "medium", "high"]] = Field(
+            description="Reasoning effort level for models that support it.",
+            default=None,
+        )
+        disable_reasoning: Optional[bool] = Field(
+            description="Disable reasoning for models that support it.",
+            default=None,
+        )
 
     def __init__(self, model_id):
         self.model_id = model_id
@@ -190,9 +198,25 @@ class CerebrasModel(llm.Model):
         api_key = self.get_key()
         has_schema = bool(getattr(prompt, "schema", None))
         should_stream = stream and not has_schema
+        api_model = self.model_map.get(self.model_id, self.model_id)
+
+        if (
+            prompt.options.reasoning_effort is not None
+            and api_model != "gpt-oss-120b"
+        ):
+            raise llm.ModelError(
+                "reasoning_effort can only be used with the gpt-oss-120b model"
+            )
+        if (
+            prompt.options.disable_reasoning is not None
+            and api_model != "zai-glm-4.7"
+        ):
+            raise llm.ModelError(
+                "disable_reasoning can only be used with the zai-glm-4.7 model"
+            )
 
         data = {
-            "model": self.model_map.get(self.model_id, self.model_id),
+            "model": api_model,
             "messages": messages,
             "stream": should_stream,
             "temperature": prompt.options.temperature,
@@ -200,6 +224,10 @@ class CerebrasModel(llm.Model):
             "top_p": prompt.options.top_p,
             "seed": prompt.options.seed,
         }
+        if prompt.options.reasoning_effort is not None:
+            data["reasoning_effort"] = prompt.options.reasoning_effort
+        if prompt.options.disable_reasoning is not None:
+            data["disable_reasoning"] = prompt.options.disable_reasoning
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
