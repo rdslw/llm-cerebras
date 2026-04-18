@@ -5,7 +5,7 @@ setup(
     version="0.2.0",
     packages=find_packages(),
     install_requires=[
-        "llm",
+        "llm>=0.30",
         "httpx",
     ],
     entry_points={
@@ -22,7 +22,6 @@ setup(
     classifiers=[
         "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
     ],
 )

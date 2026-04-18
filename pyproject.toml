@@ -15,10 +15,10 @@ license = "Apache-2.0"
 classifiers = [
 ]
 dependencies = [
-    "llm",
+    "llm>=0.30",
     "httpx",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [project.urls]
 Homepage = "https://github.com/irthomasthomas/llm-cerebras"
@@ -30,7 +30,6 @@ cerebras = "llm_cerebras.cerebras"
 
 [dependency-groups]
 dev = [
-    "jsonschema",
     "pytest",
 ]
 

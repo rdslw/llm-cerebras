@@ -20,7 +20,7 @@ def test_build_messages(cerebras_model):
     assert messages[0] == {"role": "user", "content": "Test prompt"}
 
 @patch('llm_cerebras.cerebras.httpx.post')
-@patch('llm_cerebras.cerebras.llm.get_key')
+@patch('llm_cerebras.cerebras.CerebrasModel.get_key')
 def test_execute_non_streaming(mock_get_key, mock_post, cerebras_model):
     mock_get_key.return_value = "fake-api-key"
     mock_response = MagicMock()
@@ -37,8 +37,7 @@ def test_execute_non_streaming(mock_get_key, mock_post, cerebras_model):
     prompt.options.top_p = 1
     prompt.options.seed = None
     
-    # Make sure prompt doesn't have a schema attribute
-    type(prompt).schema = None
+    prompt.schema = None
 
     response = MagicMock()
     conversation = None

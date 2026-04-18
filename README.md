@@ -2,6 +2,8 @@
 
 This is a plugin for [LLM](https://llm.datasette.io/) that adds support for the Cerebras inference API.
 
+This fork targets `llm>=0.30` and `Python>=3.10`.
+
 ## Installation
 
 Install this plugin in the same environment as LLM. The recommended workflow uses `uv`.
@@ -42,7 +44,10 @@ This will fetch the current list of available models and save them to the cache.
 
 ## Schema Support
 
-The llm-cerebras plugin supports schemas for structured output. You can use either compact schema syntax or full JSON Schema:
+The llm-cerebras plugin supports schemas for structured output using Cerebras native `json_schema` mode in strict mode.
+For compatibility with Cerebras structured outputs, object schemas are normalized to set `additionalProperties: false`.
+
+You can use either compact schema syntax or full JSON Schema:
 
 ```bash
 # Using compact schema syntax

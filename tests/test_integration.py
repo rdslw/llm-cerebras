@@ -171,3 +171,59 @@ def test_schema_with_description():
         assert any(title in data["name"] for title in ["Dr.", "Professor", "Prof."]), "Name doesn't contain title despite description"
     except json.JSONDecodeError:
         pytest.fail(f"Response is not valid JSON: {stdout}")
+
+
+@pytest.mark.integration
+def test_schema_strict_keys_smoke():
+    """Strict structured outputs should not return extra top-level keys."""
+    stdout, stderr, returncode = run_llm_command([
+        "-m", "cerebras-llama3.1-8b",
+        "--schema", "name, age int",
+        "Generate a fictional person",
+    ])
+    assert returncode == 0, f"Command failed with stderr: {stderr}"
+
+    data = json.loads(stdout)
+    assert set(data.keys()) == {"name", "age"}
+    assert isinstance(data["name"], str)
+    assert isinstance(data["age"], int)
+
+
+@pytest.mark.integration
+def test_schema_file_without_additional_properties_is_normalized():
+    """Plugin should normalize object schemas for Cerebras strict mode."""
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as f:
+        schema_file = f.name
+        json.dump(
+            {
+                "type": "object",
+                "properties": {
+                    "person": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "age": {"type": "integer"},
+                        },
+                        "required": ["name", "age"],
+                    }
+                },
+                "required": ["person"],
+            },
+            f,
+        )
+
+    try:
+        stdout, stderr, returncode = run_llm_command([
+            "-m", "cerebras-llama3.1-8b",
+            "--schema", schema_file,
+            "Generate a fictional person",
+        ])
+        assert returncode == 0, f"Command failed with stderr: {stderr}"
+
+        data = json.loads(stdout)
+        assert set(data.keys()) == {"person"}
+        assert set(data["person"].keys()) == {"name", "age"}
+        assert isinstance(data["person"]["name"], str)
+        assert isinstance(data["person"]["age"], int)
+    finally:
+        os.unlink(schema_file)
