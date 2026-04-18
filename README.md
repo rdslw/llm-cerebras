@@ -4,10 +4,10 @@ This is a plugin for [LLM](https://llm.datasette.io/) that adds support for the 
 
 ## Installation
 
-Install this plugin in the same environment as LLM.
+Install this plugin in the same environment as LLM. The recommended workflow uses `uv`.
 
 ```bash
-pip install llm-cerebras
+uv tool install --with llm-cerebras llm
 ```
 
 ## Configuration
@@ -91,45 +91,36 @@ llm -t movie_template 'suggest a sci-fi movie from the 1980s'
 
 ## Development
 
-To set up this plugin locally, first checkout the code. Then create a new virtual environment:
+This project now uses a `uv`-first workflow for local development. `uv sync` will create and manage the virtual environment for you.
 
 ```bash
 cd llm-cerebras
-python -m venv venv
-source venv/bin/activate
+uv sync --group dev
 ```
 
-Now install the dependencies and test dependencies:
+Run the core test suite:
 
 ```bash
-pip install -e '.[test]'
+uv run pytest tests/test_cerebras.py tests/test_schema_support.py
 ```
 
-### Running Tests
-
-To run the unit tests:
+Run integration tests if you have a valid `CEREBRAS_API_KEY`:
 
 ```bash
-pytest tests/test_cerebras.py tests/test_schema_support.py
+uv run pytest tests/test_integration.py
 ```
 
-To run integration tests (requires a valid API key):
+Run automated user workflow tests:
 
 ```bash
-pytest tests/test_integration.py
+uv run pytest tests/test_automated_user.py
 ```
 
-To run automated user workflow tests:
+Filter by pytest marker when needed:
 
 ```bash
-pytest tests/test_automated_user.py
-```
-
-You can run specific test types using markers:
-
-```bash
-pytest -m "integration"  # Run only integration tests
-pytest -m "user"         # Run only user workflow tests
+uv run pytest -m "integration"  # Run only integration tests
+uv run pytest -m "user"         # Run only user workflow tests
 ```
 
 ## License

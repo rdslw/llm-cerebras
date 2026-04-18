@@ -1,9 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "llm-cerebras"
-version = "0.1.8"
+version = "0.2.0"
 description = "Plugin for LLM adding fast Cerebras inference API support"
 readme = "README.md"
-authors = [{name = "Thomas (Thomasthomas) Hughes"}]
+authors = [
+    {name = "Thomas (Thomasthomas) Hughes"},
+    {name = "Radosław Stachowiak"},
+]
 license = "Apache-2.0"
 classifiers = [
 ]
@@ -11,7 +18,7 @@ dependencies = [
     "llm",
     "httpx",
 ]
-requires-python = ">3.7"
+requires-python = ">=3.9"
 
 [project.urls]
 Homepage = "https://github.com/irthomasthomas/llm-cerebras"
@@ -20,6 +27,13 @@ Issues = "https://github.com/irthomasthomas/llm-cerebras/issues"
 
 [project.entry-points.llm]
 cerebras = "llm_cerebras.cerebras"
+
+[dependency-groups]
+dev = [
+    "jsonschema",
+    "pytest",
+]
+
 [tool.pytest.ini_options]
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
