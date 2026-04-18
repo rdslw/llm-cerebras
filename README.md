@@ -118,22 +118,16 @@ cd llm-cerebras
 uv sync --group dev
 ```
 
-Run the core test suite:
+Run full test suite (core,user_workflows,schema_support, integration):
 
 ```bash
-uv run pytest tests/test_cerebras.py tests/test_schema_support.py
+uv run pytest
 ```
 
-Run integration tests if you have a valid `CEREBRAS_API_KEY`:
+Run integration tests plus automated user net ones, if you have a valid `CEREBRAS_API_KEY`:
 
 ```bash
-uv run pytest tests/test_integration.py
-```
-
-Run automated user workflow tests:
-
-```bash
-uv run pytest tests/test_automated_user.py
+uv run pytest tests/test_integration.py tests/test_user_workflows.py
 ```
 
 Filter by pytest marker when needed:
