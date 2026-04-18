@@ -195,7 +195,12 @@ class CerebrasModel(llm.Model):
 
     def execute(self, prompt, stream, response, conversation):
         messages = self._build_messages(prompt, conversation)
-        api_key = self.get_key()
+        try:
+            api_key = self.get_key()
+        except llm.NeedsKeyException as ex:
+            raise llm.ModelError("No Cerebras API key configured") from ex
+        if not api_key:
+            raise llm.ModelError("No Cerebras API key configured")
         has_schema = bool(getattr(prompt, "schema", None))
         should_stream = stream and not has_schema
         api_model = self.model_map.get(self.model_id, self.model_id)

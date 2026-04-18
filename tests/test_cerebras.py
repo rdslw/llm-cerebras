@@ -1,6 +1,7 @@
 import pytest
 from llm_cerebras.cerebras import CerebrasModel
 from unittest.mock import patch, MagicMock
+import llm
 
 @pytest.fixture
 def cerebras_model():
@@ -55,6 +56,15 @@ def test_execute_non_streaming(mock_get_key, mock_post, cerebras_model):
 
     assert result == ["Test response"]
     mock_post.assert_called_once()
+    assert mock_post.call_args.kwargs["timeout"] == 120
+
+
+@patch("llm_cerebras.cerebras.CerebrasModel.get_key")
+def test_execute_without_api_key_raises_model_error(mock_get_key, cerebras_model):
+    mock_get_key.side_effect = llm.NeedsKeyException("missing")
+
+    with pytest.raises(Exception, match="No Cerebras API key configured"):
+        list(cerebras_model.execute(make_prompt(), False, MagicMock(), None))
 
 
 @pytest.fixture
@@ -174,6 +184,23 @@ def test_reasoning_options_omitted_when_none(mock_get_key, mock_post, cerebras_m
     payload = mock_post.call_args.kwargs["json"]
     assert "reasoning_effort" not in payload
     assert "disable_reasoning" not in payload
+
+
+@patch("llm_cerebras.cerebras.httpx.stream")
+@patch("llm_cerebras.cerebras.CerebrasModel.get_key")
+def test_execute_streaming_uses_bounded_timeout(mock_get_key, mock_stream, cerebras_model):
+    mock_get_key.return_value = "fake-api-key"
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value = mock_response
+    mock_response.__exit__.return_value = None
+    mock_response.iter_lines.return_value = ["data: {\"choices\":[{\"delta\":{\"content\":\"Test\"}}]}", "data: [DONE]"]
+    mock_response.raise_for_status.return_value = None
+    mock_stream.return_value = mock_response
+
+    result = list(cerebras_model.execute(make_prompt(), True, MagicMock(), None))
+
+    assert result == ["Test"]
+    assert mock_stream.call_args.kwargs["timeout"] == 120
 
 if __name__ == "__main__":
     pytest.main()
